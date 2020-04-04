@@ -1,0 +1,102 @@
+#!/bin/bash
+
+###############################################################################################
+##                                                                                           ##
+##                       Universidad Carlos III de Madrid (UC3M)                             ##
+##                                                                                           ##
+##    Lightning - The simple and lightweight network simulator based on Docker containers    ##
+##                                                                                           ##
+##    author:         Pablo Toribio (under supervision of professor C.J. Bernardos Cano)     ##
+##                                                                                           ##
+##    project site:   https://github.com/ptoribi/lightning                                   ##
+##                                                                                           ##
+##    file description:  ensures that lightning is executed with proper user privileges      ##
+##                       and launchs the application                                         ##
+##                                                                                           ##
+##    usage:             ./lightning-launcher                                                ##
+##                                                                                           ##
+###############################################################################################
+
+# ptoribi: differences between the output of the commands logname and whoami depending on how the script was launched:
+# 1.- as a regular user (user)
+# 2.- using the command sudo (sudo)
+# 3.- directly as root: logged in the session as root directly, not using su -l or similar (root)
+#
+#      | logname | whoami |
+# -------------------------
+# user | "user"  | "user" |
+# sudo | "user"  | "root" |
+# root | "root"  | "root" |
+
+#echo "lightning-launcher --> logname: $(logname)"
+#echo "lightning-launcher --> whoami:  $(whoami)"
+# work_around
+function log_name() {
+    [ -n "$SUDO_USER" ] && echo $SUDO_USER
+    [ -z "$SUDO_USER" ] && id -un
+}
+
+# ptoribi: "which" will find in the path the full location of the executable, "readlink -f" will resolve all possible symbolic links and "dirname" will remove the last component (file name).
+# In the default case: /usr/local/bin/lightning -> /usr/local/lightning/lightning-launcher -> /usr/local/lightning
+LIGHTNING_INSTALLATION_PATH=$(dirname $(readlink -f $(which lightning)))
+USER_BEHIND_SUDO=$(log_name)
+USER_BEHIND_SUDO_HOME_PATH=$(getent passwd $USER_BEHIND_SUDO | cut -d : -f 6)
+source $LIGHTNING_INSTALLATION_PATH/variables.conf
+
+if [[ $SHARED_FOLDER_LOCATION == "TMP" ]]
+then
+  SHARED_FOLDER=/tmp/$USER_BEHIND_SUDO/$SHARED_FOLDER_NAME
+  mkdir -p $SHARED_FOLDER
+  chmod 770 /tmp/$USER_BEHIND_SUDO
+else
+  SHARED_FOLDER=$USER_BEHIND_SUDO_HOME_PATH/$SHARED_FOLDER_NAME
+fi
+
+# ptoribi: configure the console to use 256 colors
+export TERM=xterm-256color
+
+# ptoribi: the purpose of "lightning-launcher" is to ensure that the main program
+# is executed by a regular user with "sudo" command. If sudo has already been used
+# for executing lightning-launcher, it just proceeds to execute the main one.
+# Execution of the program directly as root is not supported.
+
+# ptoribi: execution sequence
+# lightning (symlink) ----> lightning-launcher ----> sudo lightning (main program)
+
+if [ $# -eq 0 ]
+then
+  $LIGHTNING_INSTALLATION_PATH/lightning
+  exit
+fi
+
+if [ -n "$1" -a "$1" == "update" ]
+then
+  if [ $(whoami) != "root" ]
+  then
+    sudo $LIGHTNING_INSTALLATION_PATH/update
+  else
+    $LIGHTNING_INSTALLATION_PATH/update
+  fi
+
+  exit
+fi
+
+if [ $(log_name) != "root" -a $(whoami) != "root" ]
+then
+  # ptoribi: the program was executed as a regular user
+  # I use "$@" for propagating all the arguments among scripts.
+  mkdir -p $SHARED_FOLDER
+  sudo $LIGHTNING_INSTALLATION_PATH/lightning "$@"
+
+elif [ $(log_name) != "root" -a $(whoami) == "root" ]
+then
+  # ptoribi: the program was executed as a regular user with sudo
+  # I use "$@" for propagating all the arguments among scripts.
+  mkdir -p $SHARED_FOLDER
+  $LIGHTNING_INSTALLATION_PATH/lightning "$@"
+
+elif [ $(log_name) == "root" -a $(whoami) == "root" ]
+then
+  # ptoribi: the program was executed as root directly
+  echo $(tput setaf 220)[lightning-launcher]:$(tput sgr 0) $(tput setaf 0)$(tput setab 1) Execution of this program directly as root is not supported. $(tput sgr 0)
+fi
